@@ -57,6 +57,37 @@ builder.Services.AddSingleton<AzureOpenAIClient>((_) =>
 
 var app = builder.Build();
 
+// --- New startup DB connectivity check --------------------------------------------------
+var logger = app.Services.GetRequiredService<ILogger<Program>>();
+try
+{
+    var connStr = builder.Configuration.GetConnectionString("ContosoSuites");
+    if (string.IsNullOrWhiteSpace(connStr))
+    {
+        logger.LogWarning("Connection string 'ContosoSuites' is not configured. Confirm appsettings or environment variable.");
+    }
+    else
+    {
+        // Try a lightweight connection open to validate connectivity at startup.
+        using var sqlConn = new SqlConnection(connStr);
+        try
+        {
+            sqlConn.Open();
+            logger.LogInformation("Successfully opened test connection to SQL database for 'ContosoSuites'.");
+            sqlConn.Close();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to open SQL connection for 'ContosoSuites'. Check connection string and network accessibility.");
+        }
+    }
+}
+catch (Exception ex)
+{
+    logger.LogError(ex, "Unexpected error during database connectivity check.");
+}
+// ---------------------------------------------------------------------------------------
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
@@ -68,9 +99,21 @@ app.UseHttpsRedirection();
 
 /**** Endpoints ****/
 // This endpoint serves as the default landing page for the API.
-app.MapGet("/", async () => 
+app.MapGet("/", async (HttpContext context) =>
 {
-    return "Welcome to the Contoso Suites Web API!";
+    try
+    {
+        var db = context.RequestServices.GetRequiredService<IDatabaseService>();
+        var hotels = await db.GetHotels();
+        return Results.Ok(hotels);
+    }
+    catch (Exception ex)
+    {
+        var connStr = builder.Configuration.GetConnectionString("ContosoSuites");
+        // Do not expose sensitive connection details; indicate presence/absence
+        var connNote = string.IsNullOrWhiteSpace(connStr) ? "Connection string missing." : "Connection string present (redacted).";
+        return Results.Problem(detail: ex.Message, title: "Failed to load hotels from database.", extensions: new Dictionary<string, object?> { ["connection"] = connNote });
+    }
 })
     .WithName("Index")
     .WithOpenApi();
