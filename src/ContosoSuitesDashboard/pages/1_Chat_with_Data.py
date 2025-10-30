@@ -1,106 +1,79 @@
+
+
+import requests
 import streamlit as st
-import openai
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+
 
 st.set_page_config(layout="wide")
 
-def create_chat_completion(messages):
-    """Create and return a new chat completion request. Key assumptions:
-    - The Azure OpenAI endpoint and deployment name are stored in Streamlit secrets."""
+@st.cache_data
+def get_hotels():
+    """Return a list of hotels from the API."""
+    api_endpoint = st.secrets["api"]["endpoint"]
+    response = requests.get(f"{api_endpoint}/Hotels", timeout=10)
+    return response
 
-    # Retrieve secrets from the Streamlit secret store.
-    # This is a secure way to store sensitive information that you don't want to expose in your code.
-    # Learn more about Streamlit secrets here: https://docs.streamlit.io/develop/concepts/connections/secrets-management
-    # The secrets themselves are stored in the .streamlit/secrets.toml file.
+@st.cache_data
+def get_hotel_bookings(hotel_id):
+    """Return a list of bookings for the specified hotel."""
+    api_endpoint = st.secrets["api"]["endpoint"]
+    response = requests.get(f"{api_endpoint}/Hotels/{hotel_id}/Bookings", timeout=10)
+    return response
 
-    token_provider = get_bearer_token_provider(
-        DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
-    )
-    
-    aoai_endpoint = st.secrets["aoai"]["endpoint"]
-    aoai_deployment_name = st.secrets["aoai"]["deployment_name"]
-
-    search_endpoint = st.secrets["search"]["endpoint"]
-    search_key = st.secrets["search"]["key"]
-    search_index_name = st.secrets["search"]["index_name"]
-
-
-    client = openai.AzureOpenAI(
-        azure_ad_token_provider=token_provider,
-        api_version="2024-06-01",
-        azure_endpoint = aoai_endpoint
-    )
-    # Create and return a new chat completion request
-    return client.chat.completions.create(
-          model=aoai_deployment_name,
-          messages=[
-              {"role": m["role"], "content": m["content"]}
-              for m in messages
-          ],
-          stream=True,
-          extra_body={
-              "data_sources": [
-                  {
-                      "type": "azure_search",
-                      "parameters": {
-                          "endpoint": search_endpoint,
-                          "index_name": search_index_name,
-                          "authentication": {
-                              "type": "api_key",
-                              "key": search_key
-                          }
-                      }
-                  }
-              ]
-          }
-      )
-
-def handle_chat_prompt(prompt):
-    """Echo the user's prompt to the chat window.
-    Then, send the user's prompt to Azure OpenAI and display the response."""
-
-    # Echo the user's prompt to the chat window
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
- 
-    # Send the user's prompt to Azure OpenAI and display the response
-    # The call to Azure OpenAI is handled in create_chat_completion()
-    # This function loops through the responses and displays them as they come in.
-    # It also appends the full response to the chat history.
-    with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        full_response = ""
-        for response in create_chat_completion(st.session_state.messages):
-            if response.choices:
-                full_response += (response.choices[0].delta.content or "")
-                message_placeholder.markdown(full_response + "▌")
-        message_placeholder.markdown(full_response)
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
+@st.cache_data
+def invoke_chat_endpoint(question):
+    """Invoke the chat endpoint with the specified question."""
+    api_endpoint = st.secrets["api"]["endpoint"]
+    response = requests.post(f"{api_endpoint}/Chat", data={"message": question}, timeout=10)
+    return response
 
 def main():
     """Main function for the Chat with Data Streamlit app."""
 
     st.write(
     """
-    # Chat with Data
+    # API Integration via Semantic Kernel
 
-    This Streamlit dashboard is intended to show off capabilities of Azure OpenAI, including integration with AI Search.
+    This Streamlit dashboard is intended to demonstrate how we can use
+    the Semantic Kernel library to generate SQL statements from natural language
+    queries and display them in a Streamlit app.
+
+    ## Select a Hotel
     """
     )
 
-    # Initialize chat history
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    # Display the list of hotels as a drop-down list
+    hotels_json = get_hotels().json()
+    # Reshape hotels to an object with hotelID and hotelName
+    hotels = [{"id": hotel["hotelID"], "name": hotel["hotelName"]} for hotel in hotels_json]
+    
+    selected_hotel = st.selectbox("Hotel:", hotels, format_func=lambda x: x["name"])
 
-    # Display chat messages from history on app rerun
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    # Display the list of bookings for the selected hotel as a table
+    if selected_hotel:
+        hotel_id = selected_hotel["id"]
+        bookings = get_hotel_bookings(hotel_id).json()
+        st.write("### Bookings")
+        st.table(bookings)
 
-    # Await a user message and handle the chat prompt when it comes in.
-    if prompt := st.chat_input("Enter a message:"):
-        handle_chat_prompt(prompt)
+    st.write(
+        """
+        ## Ask a Bookings Question
+
+        Enter a question about hotel bookings in the text box below.
+        Then select the "Submit" button to call the Chat endpoint.
+        """
+    )
+
+    question = st.text_input("Question:", key="question")
+    if st.button("Submit"):
+        with st.spinner("Calling Chat endpoint..."):
+            if question:
+                response = invoke_chat_endpoint(question)
+                st.write(response.text)
+                st.success("Chat endpoint called successfully.")
+            else:
+                st.warning("Please enter a question.")
 
 if __name__ == "__main__":
     main()
