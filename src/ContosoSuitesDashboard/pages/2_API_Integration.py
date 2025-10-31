@@ -17,7 +17,12 @@ def get_hotel_bookings(hotel_id):
     response = requests.get(f"{api_endpoint}/Hotels/{hotel_id}/Bookings", timeout=10)
     return response
 
-
+@st.cache_data
+def invoke_chat_endpoint(question):
+    """Invoke the chat endpoint with the specified question."""
+    api_endpoint = st.secrets["api"]["endpoint"]
+    response = requests.post(f"{api_endpoint}/Chat", data={"message": question}, timeout=10)
+    return response
 
 def main():
     """Main function for the Chat with Data Streamlit app."""
